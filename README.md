@@ -5,6 +5,13 @@ most GEX overlays quietly wrong: **open interest is published once a day, and a
 naive pipeline presents yesterday's OI as "live" all session long -- while a
 sloppy sign convention puts the gamma flip on the wrong side of spot.**
 
+![GEX levels on SPX 15m, run on a Sunday: the table says STALE, OI 47.7h old](docs/spx-15m-gex-levels-stale.png)
+
+*SPX 15m on TradingView, 2026-09-06 (a Sunday). The level string was produced by
+`python -m gex_levels compute --ticker ^SPX` and pasted into the indicator. The
+freshness table reports the snapshot as Friday's settlement, 47.7h old, and
+says STALE. The naive pipeline would have drawn the same lines with no warning.*
+
 ## What this proves
 
 Two functions compute the same levels from the same option chain:
@@ -242,9 +249,10 @@ nothing surprising to handle.
 
 Built as a proof, not operated in production. The Python side is tested
 offline on Linux and Windows, Python 3.11 and 3.12. The Pine indicator is not
-compiled anywhere in this repo; it is kept deliberately small and commented so
-that a manual check on TradingView is a five-minute job, not a debugging
-session.
+compiled in CI (TradingView has no headless compiler); it was compiled and
+checked by hand on TradingView on 2026-09-06 with a live SPX level string, see
+the screenshot at the top. It is kept deliberately small and commented so that
+repeating that check is a five-minute job, not a debugging session.
 
 ## Licence
 
