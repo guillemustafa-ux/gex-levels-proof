@@ -75,7 +75,7 @@ var label[] tags    = array.new_label()
 var table   hud     = table.new(position.top_right, 1, 4, border_width = 1)
 
 drawLevel(float px, string name, color c, int width) =>
-    ln = line.new(bar_index - 1, px, bar_index, px, extend = extend.right, color = c, width = width)
+    ln = line.new(bar_index - 1, px, bar_index, px, extend = extend.both, color = c, width = width)
     lb = label.new(bar_index, px, name + "  " + str.tostring(px, format.mintick),
          style = label.style_label_left, color = color.new(c, 20), textcolor = color.white, size = size.small)
     array.push(drawn, ln)
