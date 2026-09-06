@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gex-levels-proof"
+version = "1.0.0"
+description = "Gamma-exposure levels for TradingView that carry the age of the open interest they were computed from"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Guillermo Mustafa" }]
+dependencies = []
+
+[project.optional-dependencies]
+live = ["yfinance>=0.2"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+gex-levels = "gex_levels.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,181 @@
+//@version=6
+indicator("GEX Levels (string + Seeds)",
+     shorttitle = "GEX",
+     overlay = true,
+     max_lines_count = 500,
+     max_labels_count = 500)
+
+//──────────────────────────────────────────────────────────────────────────────
+// Draws gamma-exposure levels computed OFF the chart by the gex_levels Python
+// package. Pine cannot call an API at runtime, so the levels arrive by one of
+// the two paths TradingView actually supports:
+//
+//   1. Level string  - pasted into the input below. Intraday, one paste per
+//      refresh. Format (version 1, no whitespace):
+//        v1;asof=20260904T2000Z;spot=5400.00;FLIP=5430.34;CW=5500;PW=5300;L=5500:6.899e8,5300:-2.412e8
+//      The grammar is split on ';', '=', ',' and ':' only. The Python function
+//      parse_level_string() mirrors this parser and is what the tests pin.
+//
+//   2. Pine Seeds    - request.seed() against CSVs pushed to a GitHub repo.
+//      Seeds is an END-OF-DAY feed (TradingView ingests it once a day), so it
+//      can only ever be yesterday's baseline. It is never intraday, and no
+//      Pine code can make it so.
+//
+// Object management: everything is deleted and redrawn on the last bar only,
+// so the total live object count is 3 + N extra levels, well under the cap.
+//
+// This file is validated by hand on TradingView. It is not compiled in CI.
+//──────────────────────────────────────────────────────────────────────────────
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grpS = "Level string"
+levelStr   = input.string("", "Level string (paste from: python -m gex_levels compute ...)", group = grpS)
+staleAfter = input.float(24.0, "Warn when the OI snapshot is older than (hours)", minval = 1.0, group = grpS,
+     tooltip = "Exchanges publish open interest once a day. Past this age at least one settlement has happened since the levels were computed.")
+maxExtra   = input.int(10, "Extra |GEX| levels to draw", minval = 0, maxval = 20, group = grpS)
+showTable  = input.bool(true, "Show freshness table", group = grpS)
+
+grpD = "Pine Seeds baseline (EOD only)"
+useSeed  = input.bool(false, "Overlay yesterday's levels from Pine Seeds", group = grpD)
+seedRepo = input.string("seed_user_gex", "Seeds source (repo name)", group = grpD,
+     tooltip = "The GitHub repo registered with Pine Seeds, containing data/FLIP.csv, data/CALLWALL.csv and data/PUTWALL.csv written by to_pine_seeds().")
+
+// ── Parsing helpers ──────────────────────────────────────────────────────────
+// str.tonumber() is not documented to accept exponent notation, so the
+// mantissa and the exponent are parsed separately: "6.899e8" -> 6.899 * 10^8.
+parseSci(string s) =>
+    parts = str.split(s, "e")
+    m = str.tonumber(array.get(parts, 0))
+    e = array.size(parts) > 1 ? str.tonumber(array.get(parts, 1)) : 0.0
+    na(m) ? float(na) : m * math.pow(10, na(e) ? 0.0 : e)
+
+// "20260904T2000Z" -> UNIX ms in UTC. Anything of the wrong length is na.
+parseAsOf(string s) =>
+    if str.length(s) != 14
+        int(na)
+    else
+        y  = int(str.tonumber(str.substring(s, 0, 4)))
+        mo = int(str.tonumber(str.substring(s, 4, 6)))
+        d  = int(str.tonumber(str.substring(s, 6, 8)))
+        h  = int(str.tonumber(str.substring(s, 9, 11)))
+        mi = int(str.tonumber(str.substring(s, 11, 13)))
+        timestamp("UTC", y, mo, d, h, mi, 0)
+
+// ── State ────────────────────────────────────────────────────────────────────
+var float flipLv  = na
+var float callLv  = na
+var float putLv   = na
+var float spotIn  = na
+var int   asOfMs  = na
+var bool  parseOk = false
+var float[] xStrike = array.new_float()
+var float[] xGex    = array.new_float()
+var line[]  drawn   = array.new_line()
+var label[] tags    = array.new_label()
+var table   hud     = table.new(position.top_right, 1, 4, border_width = 1)
+
+drawLevel(float px, string name, color c, int width) =>
+    ln = line.new(bar_index - 1, px, bar_index, px, extend = extend.right, color = c, width = width)
+    lb = label.new(bar_index, px, name + "  " + str.tostring(px, format.mintick),
+         style = label.style_label_left, color = color.new(c, 20), textcolor = color.white, size = size.small)
+    array.push(drawn, ln)
+    array.push(tags, lb)
+
+// ── Parse + redraw on the last bar only ──────────────────────────────────────
+if barstate.islast
+    for ln in drawn
+        line.delete(ln)
+    for lb in tags
+        label.delete(lb)
+    array.clear(drawn)
+    array.clear(tags)
+    array.clear(xStrike)
+    array.clear(xGex)
+    flipLv := na
+    callLv := na
+    putLv  := na
+    spotIn := na
+    asOfMs := na
+    parseOk := false
+
+    if str.length(levelStr) > 0
+        fields = str.split(levelStr, ";")
+        if array.size(fields) > 0 and array.get(fields, 0) == "v1"
+            parseOk := true
+            for f in fields
+                kv = str.split(f, "=")
+                if array.size(kv) == 2
+                    key = array.get(kv, 0)
+                    val = array.get(kv, 1)
+                    switch key
+                        "asof" => asOfMs := parseAsOf(val)
+                        "spot" => spotIn := str.tonumber(val)
+                        "FLIP" => flipLv := str.tonumber(val)   // "na" parses to na, which is the intent
+                        "CW"   => callLv := str.tonumber(val)
+                        "PW"   => putLv  := str.tonumber(val)
+                        "L"    =>
+                            for item in str.split(val, ",")
+                                pair = str.split(item, ":")
+                                if array.size(pair) == 2
+                                    array.push(xStrike, str.tonumber(array.get(pair, 0)))
+                                    array.push(xGex, parseSci(array.get(pair, 1)))
+
+    // Extra levels first (behind), headline levels on top. The string is
+    // already sorted by |GEX| descending, so the index is the rank.
+    // Guarded: a Pine `for 0 to -1` iterates downward instead of skipping.
+    nExtra = math.min(array.size(xStrike), maxExtra)
+    if nExtra > 0
+        for i = 0 to nExtra - 1
+            k = array.get(xStrike, i)
+            g = array.get(xGex, i)
+            if not na(k) and k != callLv and k != putLv
+                // Rank 0 is nearly opaque; the last one fades out. |GEX| in
+                // words would be noise on a chart, so only the sign is coloured.
+                transp = 40 + int(50 * i / nExtra)
+                drawLevel(k, (g >= 0 ? "+" : "-") + "GEX", color.new(g >= 0 ? color.teal : color.orange, transp), 1)
+    if not na(putLv)
+        drawLevel(putLv, "Put wall", color.red, 2)
+    if not na(callLv)
+        drawLevel(callLv, "Call wall", color.green, 2)
+    if not na(flipLv)
+        drawLevel(flipLv, "Gamma flip", color.yellow, 2)
+
+    // Freshness table. timenow is the chart's wall clock, so the age is
+    // real even on a stale-looking historical bar.
+    if showTable
+        ageH  = na(asOfMs) ? float(na) : (timenow - asOfMs) / 3600000.0
+        stale = na(ageH) or ageH >= staleAfter
+        bg    = not parseOk ? color.new(color.gray, 20) : stale ? color.new(color.red, 10) : color.new(color.green, 40)
+        status = not parseOk ? "No level string" : na(ageH) ? "asof missing - treat as STALE" :
+                 stale ? "STALE: OI " + str.tostring(ageH, "#.#") + "h old" : "OI " + str.tostring(ageH, "#.#") + "h old"
+        table.cell(hud, 0, 0, "GEX levels", text_color = color.white, bgcolor = color.new(color.gray, 20), text_size = size.small)
+        table.cell(hud, 0, 1, status, text_color = color.white, bgcolor = bg, text_size = size.small)
+        table.cell(hud, 0, 2, na(asOfMs) ? "" : "OI as of " + str.format_time(asOfMs, "yyyy-MM-dd HH:mm", "UTC") + " UTC",
+             text_color = color.white, bgcolor = color.new(color.gray, 20), text_size = size.small)
+        table.cell(hud, 0, 3, na(spotIn) ? "" : "computed at spot " + str.tostring(spotIn, format.mintick),
+             text_color = color.white, bgcolor = color.new(color.gray, 20), text_size = size.small)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+// alertcondition() must live at global scope. The levels are set on the last
+// bar, which is where realtime alerts evaluate, so these fire on live crosses.
+// ta.cross() is called unconditionally on every bar (v6 `and` short-circuits,
+// which would otherwise break its history); against na it is simply false.
+crossFlip = ta.cross(close, flipLv)
+crossCall = ta.cross(close, callLv)
+crossPut  = ta.cross(close, putLv)
+alertcondition(crossFlip, "GEX: price crossed gamma flip", "Price crossed the gamma flip level")
+alertcondition(crossCall, "GEX: price crossed call wall",  "Price crossed the call wall")
+alertcondition(crossPut,  "GEX: price crossed put wall",   "Price crossed the put wall")
+
+// ── Pine Seeds baseline (EOD) ────────────────────────────────────────────────
+// request.seed() reads the CSVs written by to_pine_seeds(). The row for a
+// given date is the level computed from THAT day's settlement OI, which is
+// why it is a baseline and not a live level: TradingView ingests Seeds once
+// a day. ignore_invalid_symbol keeps the script alive when the repo is not
+// configured; the plots are simply na.
+seedFlip = request.seed(seedRepo, "FLIP",     close, ignore_invalid_symbol = true)
+seedCall = request.seed(seedRepo, "CALLWALL", close, ignore_invalid_symbol = true)
+seedPut  = request.seed(seedRepo, "PUTWALL",  close, ignore_invalid_symbol = true)
+plot(useSeed ? seedFlip : na, "EOD flip (Seeds)",      color = color.new(color.yellow, 60), style = plot.style_stepline)
+plot(useSeed ? seedCall : na, "EOD call wall (Seeds)", color = color.new(color.green,  60), style = plot.style_stepline)
+plot(useSeed ? seedPut  : na, "EOD put wall (Seeds)",  color = color.new(color.red,    60), style = plot.style_stepline)
