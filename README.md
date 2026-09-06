@@ -212,8 +212,10 @@ nothing surprising to handle.
   expected levels are unambiguous. `oi_as_of` is `2026-09-04T20:00:00Z`.
 * **yfinance (optional).** `pip install -e ".[live]"` and
   `python -m gex_levels compute --ticker SPY`. Yahoo does not expose when its
-  OI figure was captured; the loader assumes the most recent 20:00 UTC before
-  now and documents that assumption in code. The tests never touch it.
+  OI figure was captured; the loader assumes the most recent weekday 20:00 UTC
+  before now (a Sunday run stamps Friday's settlement, not Saturday's) and
+  documents that assumption in code. The assumption is unit-tested; the
+  network call is not.
 * **Most vendors refresh OI overnight.** That is the whole reason the
   freshness stamp exists. An intraday OI source is a paid subscription and the
   client's decision; this repo makes the age of whatever source is used
