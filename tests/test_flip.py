@@ -24,3 +24,23 @@ def test_with_several_crossings_the_one_nearest_spot_wins():
     profile = {100.0: -1.0, 110.0: 2.0, 120.0: -2.0, 130.0: 10.0}
     assert gamma_flip(profile) == 105.0
     assert gamma_flip(profile, spot=124.0) == 121.0
+
+
+def test_far_wing_wobble_around_zero_is_not_a_flip():
+    # Net-negative regime (the live SPY case): the far put wing wobbles around
+    # zero by a few units, then the chain goes deeply negative and never comes
+    # back. The wobble crossing is noise, not a flip.
+    profile = {500.0: 1.0, 510.0: -2.0, 520.0: 1.5, 700.0: -500.0, 760.0: -300.0, 780.0: 200.0}
+    assert gamma_flip(profile, spot=770.0) is None
+
+
+def test_noise_floor_can_be_switched_off():
+    profile = {500.0: 1.0, 510.0: -2.0, 520.0: 1.5, 700.0: -500.0, 760.0: -300.0, 780.0: 200.0}
+    # cumulative: +1, -1, +0.5, -499.5 ... -> first crossing halfway between 500 and 510
+    assert gamma_flip(profile, noise_floor=0.0) == 505.0
+
+
+def test_real_flip_survives_the_noise_floor():
+    # -300 cumulative at 700, +100 at 720: both sides are large, the flip stands.
+    profile = {680.0: -100.0, 700.0: -200.0, 720.0: 400.0, 740.0: 50.0}
+    assert gamma_flip(profile, spot=710.0) == 715.0

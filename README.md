@@ -173,9 +173,13 @@ Derived levels:
 
 * **by strike**: sum of signed GEX over rights and expiries at that strike;
 * **gamma flip**: where cumulative GEX over ascending strikes crosses zero,
-  linearly interpolated between the two bracketing strikes. With more than one
-  crossing (a thin, noisy wing can produce one) the crossing nearest spot is
-  used. No crossing means no flip, reported as `na`, never as a number;
+  linearly interpolated between the two bracketing strikes. A crossing only
+  counts once the cumulative had reached 0.5% of sum(|GEX|) before it: the far
+  wing starts near zero and wobbles, and without that floor a net-negative
+  chain (SPY on 2026-09-04: never crosses back near spot) reports a "flip"
+  200 points below spot. With more than one real crossing the one nearest
+  spot is used. No crossing means no flip, reported as `na`, never as a
+  number;
 * **call wall**: strike with the largest positive GEX;
 * **put wall**: strike with the most negative GEX;
 * **extra levels**: the top-N strikes by absolute GEX.
