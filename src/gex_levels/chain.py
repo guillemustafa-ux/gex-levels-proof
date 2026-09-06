@@ -76,13 +76,33 @@ def to_json(chain: Chain, path: str | Path) -> None:
     Path(path).write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
 
 
+def previous_settlement(now: datetime) -> datetime:
+    """Most recent weekday 20:00 UTC strictly before ``now``.
+
+    Open interest is published once per session, at settlement. On a Saturday
+    or Sunday the most recent settlement is Friday's, not "yesterday's": without
+    the weekday roll-back a Sunday run stamps Friday's OI as ~22h old and the
+    freshness verdict says FRESH for a snapshot that is really ~46h old. Exchange
+    holidays are not handled (see README, "No market calendar").
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    as_of = now.replace(hour=20, minute=0, second=0, microsecond=0)
+    if as_of >= now:
+        as_of -= timedelta(days=1)
+    while as_of.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+        as_of -= timedelta(days=1)
+    return as_of
+
+
 def from_yfinance(ticker: str, expiries: int = 2) -> Chain:
     """Load the nearest ``expiries`` expirations from Yahoo Finance.
 
     Yahoo does not expose when its open-interest figure was captured. OI on
     Yahoo reflects the previous session's settlement, so the snapshot time is
-    taken as the most recent 20:00 UTC (16:00 New York during daylight time)
-    strictly before now. That is an assumption, and it is stamped as such in
+    taken as the most recent weekday 20:00 UTC (16:00 New York during daylight
+    time) strictly before now. That is an assumption, and it is stamped as such in
     the reason text downstream; a vendor that publishes the snapshot time
     should replace this.
     """
@@ -95,10 +115,7 @@ def from_yfinance(ticker: str, expiries: int = 2) -> Chain:
 
     tk = yfinance.Ticker(ticker)
     spot = float(tk.fast_info["last_price"])
-    now = datetime.now(timezone.utc)
-    as_of = now.replace(hour=20, minute=0, second=0, microsecond=0)
-    if as_of >= now:
-        as_of -= timedelta(days=1)
+    as_of = previous_settlement(datetime.now(timezone.utc))
 
     quotes: list[OptionQuote] = []
     for expiry_text in list(tk.options)[:expiries]:
